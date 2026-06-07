@@ -1,6 +1,8 @@
 # TLS 1.3 Browser for iOS 5
 Tested on iOS 5.1 with wikipedia.org, which uses TLS 1.3. Includes a Google root certificate and the ISRG X1 certificate for Wikipedia. Add your own certificates to the certs folder and rebuild the project to include them.
 
+It uses mbedTLS, which is licensed under GNU GPL V2 and Apache 2.0. mbedTLS is statically linked into the binary. https://github.com/Mbed-TLS/mbedtls. https://github.com/Mbed-TLS/mbedtls/blob/development/LICENSE.
+
 Built using a modified version of Theos and the stock iOS 5.1 SDK.
 
 The `.deb` file is located in the `packages` directory.
