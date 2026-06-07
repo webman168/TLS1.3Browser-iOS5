@@ -1,0 +1,69 @@
+The following modification was done to Theos (https://theos.dev/docs/installation) for the build:
+
+cat ~/theos/vendor/include/Preferences/PSTableCell.h
+#import <UIKit/UIKit.h>
+
+@class PSSpecifier;
+
+#ifndef NS_ENUM
+#define NS_ENUM(_type, _name) _type _name; enum
+#endif
+
+// Add this to neutralize modern API availability tags:
+#ifndef API_AVAILABLE
+#define API_AVAILABLE(...)
+#endif
+
+typedef NS_ENUM(NSInteger, PSCellType) {
+	PSGroupCell,
+	PSLinkCell,
+	PSLinkListCell,
+	PSListItemCell,
+	PSTitleValueCell,
+	PSSliderCell,
+	PSSwitchCell,
+	PSStaticTextCell,
+	PSEditTextCell,
+	PSSegmentCell,
+	PSGiantIconCell,
+	PSGiantCell,
+	PSSecureEditTextCell,
+	PSButtonCell,
+	PSEditTextViewCell,
+	PSSpinnerCell
+};
+
+@interface PSTableCell : UITableViewCell
+
++ (PSCellType)cellTypeFromString:(NSString *)cellType;
+
+- (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reuseIdentifier specifier:(PSSpecifier *)specifier;
+
+- (void)refreshCellContentsWithSpecifier:(PSSpecifier *)specifier;
+
+- (void)setSeparatorStyle:(UITableViewCellSeparatorStyle)style;
+
+@property (nonatomic, retain) PSSpecifier *specifier;
+@property (nonatomic) PSCellType type;
+@property (nonatomic, retain) id target;
+@property (nonatomic) SEL action;
+
+@property (nonatomic, retain) id cellTarget;
+@property (nonatomic) SEL cellAction;
+
+@property (nonatomic) BOOL cellEnabled;
+
+@property (nonatomic, retain) UIImage *icon;
+
+- (UIImage *)getLazyIcon;
+
+@property (nonatomic, retain, readonly) UIImage *blankIcon;
+@property (nonatomic, retain, readonly) NSString *lazyIconAppID;
+
+@property (nonatomic, retain, readonly) UILabel *titleLabel;
+
+- (BOOL)isChecked API_AVAILABLE(ios(6.0));
+
+- (void)setChecked:(BOOL)checked API_AVAILABLE(ios(6.0));
+
+@end
