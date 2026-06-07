@@ -93,4 +93,4 @@ Accept-Encoding: identity
 
 ---
 
-**Result:** A self-contained TLS 1.3 networking stack capable of establishing secure connections from an unmodified iOS 5.1 environment using modern certificate chains and cryptographic standards.
+**Result:** A self-contained TLS 1.3 networking stack capable of establishing secure connections from an iOS 5.1 environment using modern certificate chains and cryptographic standards.
