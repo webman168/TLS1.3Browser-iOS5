@@ -1,4 +1,6 @@
-Tested on iOS 5.1 with Wikipedia
+Tested on iOS 5.1 with wikipedia.org, which uses TLS 1.3.
+
+Built using a modified version of Theos.
 
 ==Build instructions==
 make package FINALPACKAGE=1 SIGN=0
