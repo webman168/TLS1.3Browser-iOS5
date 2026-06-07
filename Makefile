@@ -1,0 +1,20 @@
+TARGET = iphone:clang:latest:5.1
+ARCHS = armv7
+SYSROOT = $(HOME)/theos/sdks/iPhoneOS5.1.sdk
+
+include $(THEOS)/makefiles/common.mk
+
+APPLICATION_NAME = TLS13Browser
+TLS13Browser_FILES = main.m TLS13AppDelegate.m TLS13URLProtocol.m
+TLS13Browser_FRAMEWORKS = UIKit CoreGraphics
+TLS13Browser_RESOURCE_FILES = Info.plist
+
+TLS13Browser_CFLAGS = -I./libs/include -I$(SYSROOT)/usr/include -I.
+TLS13Browser_LDFLAGS = -L./libs -lmbedtls -lmbedcrypto -lmbedx509
+
+# DYNAMIC STEP: Call our robust helper script to generate the cert header safely
+before-all::
+	@echo "Generating certificate bundle..."
+	@python3 generate_certs.py
+
+include $(THEOS_MAKE_PATH)/application.mk
