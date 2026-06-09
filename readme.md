@@ -7,8 +7,6 @@ Tested on iOS 5.1 with wikipedia.org, which uses TLS 1.3. Includes a Google root
 
 It uses mbedTLS-iOS5 (https://github.com/webman168/mbedtls-ios5/tree/main), which is licensed under GNU GPL V2 and Apache 2.0. mbedTLS is statically linked into the binary. https://github.com/Mbed-TLS/mbedtls. https://github.com/Mbed-TLS/mbedtls/blob/development/LICENSE.
 
-Disclaimer: This uses MBEDTLS_SSL_VERIFY_NONE, which means the browser does not validate the SSL certificate of the website being visited.
-
 Built using a modified version of Theos and the stock iOS 5.1 SDK.
 
 The `.deb` file is located in the `packages` directory.
