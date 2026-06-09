@@ -29,8 +29,8 @@
         <dict>
             <key>CFBundleIconFiles</key>
             <array>
-                <string>appicon-57.png</string>
-                <string>appicon-114.png</string>
+                <string>appicon-57-round.png</string>
+                <string>appicon-114-round.png</string>
             </array>
             <key>UIPrerenderedIcon</key>
             <false/>
