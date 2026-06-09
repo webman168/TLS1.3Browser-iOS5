@@ -7,7 +7,7 @@ include $(THEOS)/makefiles/common.mk
 APPLICATION_NAME = TLS1.3Browser
 TLS1.3Browser_FILES = main.m TLS13AppDelegate.m TLS13URLProtocol.m
 TLS1.3Browser_FRAMEWORKS = UIKit CoreGraphics
-TLS1.3Browser_RESOURCE_FILES = Info.plist
+TLS1.3Browser_RESOURCE_FILES = Info.plist appicon-57-round.png appicon-114-round.png
 
 TLS1.3Browser_CFLAGS = -I./libs/include -I$(SYSROOT)/usr/include -I.
 TLS1.3Browser_LDFLAGS = -L./libs -lmbedtls -lmbedcrypto -lmbedx509

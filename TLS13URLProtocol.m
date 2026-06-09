@@ -10,6 +10,16 @@
 // Include the dynamic bundle built by the Makefile/Python generation script
 #include "certs_bundle.h"
 
+// --- Verification Callback for Deep Diagnostic Logs ---
+static int my_verify_callback(void *data, mbedtls_x509_crt *crt, int depth, uint32_t *flags) {
+    if (*flags != 0) {
+        char vrfy_buf[512];
+        mbedtls_x509_crt_verify_info(vrfy_buf, sizeof(vrfy_buf), "  ! ", *flags);
+        NSLog(@"[TLS Callback] Cert verification flags at depth %d:\n%s", depth, vrfy_buf);
+    }
+    return 0; // Let the engine natively handle error outcomes downstream
+}
+
 @implementation TLS13URLProtocol
 
 + (BOOL)canInitWithRequest:(NSURLRequest *)request {
@@ -44,10 +54,25 @@
 - (void)performTLS13Fetch:(NSURL *)url {
     NSString *host = [url host];
     NSString *path = [url path];
-    if (path.length == 0) path = @"/";
-    if ([url query]) path = [path stringByAppendingFormat:@"?%@", [url query]];
+    
+    // Robust root path alignment
+    if (path == nil || path.length == 0) {
+        path = @"/";
+    }
+    if ([url query]) {
+        path = [path stringByAppendingFormat:@"?%@", [url query]];
+    }
 
     [self sendLog:[NSString stringWithFormat:@"Connecting to host: %@", host]];
+
+    // Ensure PSA subsystem layer is initialized for modern crypto offloading
+    if (psa_crypto_init() != 0) {
+        [self sendLog:@"Fatal: PSA Crypto Init Failed"];
+        NSError *err = [NSError errorWithDomain:@"TLS13_PSA" code:501 userInfo:nil];
+        [self.client URLProtocol:self didFailWithError:err];
+        [self.client URLProtocolDidFinishLoading:self];
+        return;
+    }
 
     mbedtls_net_context server_fd;
     mbedtls_ssl_context ssl;
@@ -63,21 +88,13 @@
     mbedtls_entropy_init(&entropy);
     mbedtls_x509_crt_init(&cacert);
     
-    if (psa_crypto_init() != 0) {
-        [self sendLog:@"Fatal: PSA Crypto Init Failed"];
-        NSError *err = [NSError errorWithDomain:@"TLS13_PSA" code:501 userInfo:nil];
-        [self.client URLProtocol:self didFailWithError:err];
-        [self.client URLProtocolDidFinishLoading:self];
-        return;
-    }
-    
     int certCount = 0;
     for (int i = 0; ca_certs_bundle[i] != 0; i++) {
         if (mbedtls_x509_crt_parse(&cacert, (const unsigned char *)ca_certs_bundle[i], strlen(ca_certs_bundle[i]) + 1) == 0) {
             certCount++;
         }
     }
-    [self sendLog:[NSString stringWithFormat:@"Loaded %d CA anchors.", certCount]];
+    [self sendLog:[NSString stringWithFormat:@"Loaded %d cert assets into internal bank.", certCount]];
     
     mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, NULL, 0);
     
@@ -90,36 +107,130 @@
         return;
     }
     
+    if (mbedtls_net_set_block(&server_fd) != 0) {
+        [self sendLog:@"Warning: Failed to explicitly bind socket to blocking mode"];
+    }
+    
+    // 1. Establish Default Client State Configurations
     mbedtls_ssl_config_defaults(&conf, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT);
-    mbedtls_ssl_conf_min_version(&conf, MBEDTLS_SSL_MAJOR_VERSION_3, MBEDTLS_SSL_MINOR_VERSION_4);
-    mbedtls_ssl_conf_max_version(&conf, MBEDTLS_SSL_MAJOR_VERSION_3, MBEDTLS_SSL_MINOR_VERSION_4);
+    
+    // PROPER PRACTICE: Negotiate smoothly from TLS 1.2 up to TLS 1.3
+    mbedtls_ssl_conf_min_version(&conf, MBEDTLS_SSL_MAJOR_VERSION_3, MBEDTLS_SSL_MINOR_VERSION_3); // TLS 1.2
+    mbedtls_ssl_conf_max_version(&conf, MBEDTLS_SSL_MAJOR_VERSION_3, MBEDTLS_SSL_MINOR_VERSION_4); // TLS 1.3
     mbedtls_ssl_conf_rng(&conf, mbedtls_ctr_drbg_random, &ctr_drbg);
+    
+    // PROPER PRACTICE: Order ciphers with TLS 1.3 prioritized first, falling back to secure TLS 1.2
+    static const int hybrid_ciphersuites[] = {
+        // --- TLS 1.3 Suites ---
+        MBEDTLS_TLS1_3_AES_256_GCM_SHA384,
+        MBEDTLS_TLS1_3_AES_128_GCM_SHA256,
+        MBEDTLS_TLS1_3_CHACHA20_POLY1305_SHA256,
+        
+        // --- TLS 1.2 Fallback Suites ---
+        MBEDTLS_TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+        MBEDTLS_TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+        MBEDTLS_TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+        MBEDTLS_TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+        MBEDTLS_TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
+        0
+    };
+    mbedtls_ssl_conf_ciphersuites(&conf, hybrid_ciphersuites);
+    
+    // Supported cryptographic curve groups
+    static const uint16_t groups[] = {
+        MBEDTLS_SSL_IANA_TLS_GROUP_SECP256R1,
+        MBEDTLS_SSL_IANA_TLS_GROUP_X25519,
+        0
+    };
+    mbedtls_ssl_conf_groups(&conf, groups);
+
+    // TLS 1.3 modern signature algorithms
+    static const uint16_t sig_algs[] = {
+        MBEDTLS_TLS1_3_SIG_ECDSA_SECP256R1_SHA256,
+        MBEDTLS_TLS1_3_SIG_RSA_PSS_RSAE_SHA256,
+        MBEDTLS_TLS1_3_SIG_RSA_PSS_RSAE_SHA384,
+        MBEDTLS_TLS1_3_SIG_RSA_PSS_RSAE_SHA512,
+        0
+    };
+    mbedtls_ssl_conf_sig_algs(&conf, sig_algs);
+    
+    // Legacy hash compatibility list for TLS 1.2 processing hooks
+    static const int legacy_sig_hashes[] = {
+        MBEDTLS_MD_SHA256,
+        MBEDTLS_MD_SHA384,
+        MBEDTLS_MD_SHA512,
+        0
+    };
+    mbedtls_ssl_conf_sig_hashes(&conf, legacy_sig_hashes);
     
     const char *alpn_protocols[] = { "http/1.1", NULL };
     mbedtls_ssl_conf_alpn_protocols(&conf, alpn_protocols);
     
-    mbedtls_ssl_conf_authmode(&conf, MBEDTLS_SSL_VERIFY_NONE); 
+    // PROPER PRACTICE: Turn full validation back on for secure production operations
+    mbedtls_ssl_conf_authmode(&conf, MBEDTLS_SSL_VERIFY_REQUIRED); 
+    mbedtls_ssl_conf_verify(&conf, my_verify_callback, NULL);
     mbedtls_ssl_conf_ca_chain(&conf, &cacert, NULL);
     
-    mbedtls_ssl_setup(&ssl, &conf);
-    mbedtls_ssl_set_hostname(&ssl, [host UTF8String]);
+    // SNI Registration
+    if (mbedtls_ssl_set_hostname(&ssl, [host UTF8String]) != 0) {
+        [self sendLog:@"Error: Failed to register SNI Hostname extension"];
+    }
+    
+    if (mbedtls_ssl_setup(&ssl, &conf) != 0) {
+        [self sendLog:@"Error: Context Engine Setup Failed"];
+    }
+    
     mbedtls_ssl_set_bio(&ssl, &server_fd, mbedtls_net_send, mbedtls_net_recv, NULL);
     
+    [self sendLog:@"Initiating Hybrid TLS 1.2 / 1.3 Handshake loop..."];
     int ret;
     while ((ret = mbedtls_ssl_handshake(&ssl)) != 0) {
         if (ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE) {
-            [self sendLog:[NSString stringWithFormat:@"Fatal Handshake Error: %d", ret]];
+            [self sendLog:[NSString stringWithFormat:@"Fatal Handshake Error: %d (0x%04X)", ret, -ret]];
+            
+            // Check verification failure details if available
+            uint32_t flags = mbedtls_ssl_get_verify_result(&ssl);
+            if (flags != 0) {
+                char vrfy_buf[512];
+                mbedtls_x509_crt_verify_info(vrfy_buf, sizeof(vrfy_buf), "  ! ", flags);
+                [self sendLog:[NSString stringWithFormat:@"Validation Failed:\n%s", vrfy_buf]];
+            }
+
             mbedtls_net_free(&server_fd);
             mbedtls_x509_crt_free(&cacert);
-            NSError *err = [NSError errorWithDomain:@"TLS13_Handshake" code:ret userInfo:nil];
+            mbedtls_ssl_free(&ssl);
+            mbedtls_ssl_config_free(&conf);
+            mbedtls_ctr_drbg_free(&ctr_drbg);
+            mbedtls_entropy_free(&entropy);
+            
+            NSError *err = [NSError errorWithDomain:@"TLS_Handshake" code:ret userInfo:nil];
             [self.client URLProtocol:self didFailWithError:err];
             [self.client URLProtocolDidFinishLoading:self]; 
             return;
         }
     }
-    [self sendLog:@"TLS 1.3 Handshake SUCCESSFUL!"];
     
-    // Modernized minimal HTTP/1.1 payload string targeting standard endpoints
+    // Verify results post-handshake to guarantee chain security
+    uint32_t flags = mbedtls_ssl_get_verify_result(&ssl);
+    if (flags != 0) {
+        [self sendLog:@"Fatal: Secondary validation check failed post-handshake."];
+        mbedtls_net_free(&server_fd);
+        mbedtls_x509_crt_free(&cacert);
+        mbedtls_ssl_free(&ssl);
+        mbedtls_ssl_config_free(&conf);
+        mbedtls_ctr_drbg_free(&ctr_drbg);
+        mbedtls_entropy_free(&entropy);
+        
+        NSError *err = [NSError errorWithDomain:@"TLS_CertVerification" code:flags userInfo:nil];
+        [self.client URLProtocol:self didFailWithError:err];
+        [self.client URLProtocolDidFinishLoading:self];
+        return;
+    }
+
+    // Determine and log what protocol was ultimately negotiated
+    const char *ver_str = mbedtls_ssl_get_version(&ssl);
+    [self sendLog:[NSString stringWithFormat:@"Handshake SUCCESSFUL! Negotiated: %s", ver_str]];
+    
     NSString *getPayload = [NSString stringWithFormat:
         @"GET %@ HTTP/1.1\r\n"
         "Host: %@\r\n"
@@ -159,7 +270,6 @@
     
     [self sendLog:[NSString stringWithFormat:@"Downloaded %lu raw bytes.", (unsigned long)[rawResponse length]]];
     
-    // Clean up SSL engine assets safely
     mbedtls_ssl_close_notify(&ssl);
     mbedtls_net_free(&server_fd);
     mbedtls_ssl_free(&ssl);
@@ -168,33 +278,25 @@
     mbedtls_entropy_free(&entropy);
     mbedtls_x509_crt_free(&cacert);
     
-    // --- ROBUST HTTP STATE PARSER ENGINE ---
+    // --- HTTP STATE PARSER ENGINE ---
     NSInteger statusCode = 200;
     NSMutableDictionary *headerDict = [[NSMutableDictionary alloc] init];
     NSData *bodyData = nil;
     
-    // Convert response to string up to header boundary safely to parse lines
     NSString *responseString = [[NSString alloc] initWithData:rawResponse encoding:NSUTF8StringEncoding];
-    
     if (!responseString) {
-        // Fallback if binary mapping issues occur
         responseString = [[NSString alloc] initWithData:rawResponse encoding:NSASCIIStringEncoding];
     }
     
     if (responseString.length > 0) {
-        // Uniform parsing across both \r\n and \n boundaries
         NSArray *lines = [responseString componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
-        NSInteger bodyLineIndex = 0;
         BOOL parsingHeaders = YES;
         
         for (NSInteger i = 0; i < lines.count; i++) {
             NSString *line = [lines objectAtIndex:i];
-            
-            // Clean out potential tracking whitespace issues
             line = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
             
             if (i == 0) {
-                // Parse HTTP Status Line (e.g., HTTP/1.1 302 Found)
                 NSArray *statusParts = [line componentsSeparatedByString:@" "];
                 if (statusParts.count > 1) {
                     statusCode = [[statusParts objectAtIndex:1] integerValue];
@@ -204,9 +306,7 @@
             
             if (parsingHeaders) {
                 if (line.length == 0) {
-                    // Empty line signifies the header boundary end
                     parsingHeaders = NO;
-                    bodyLineIndex = i + 1;
                     continue;
                 }
                 
@@ -219,12 +319,10 @@
                     }
                 }
             } else {
-                // Break early once body segment boundary hits to handle raw data array mapping safely
                 break;
             }
         }
         
-        // Re-locate body offset cleanly via binary markers instead of relying on string indices
         NSData *headerSeparator = [@"\r\n\r\n" dataUsingEncoding:NSUTF8StringEncoding];
         NSRange sepRange = [rawResponse rangeOfData:headerSeparator options:0 range:NSMakeRange(0, [rawResponse length])];
         if (sepRange.location == NSNotFound) {
@@ -239,22 +337,19 @@
     }
     
     if (!bodyData) {
-        bodyData = rawResponse; // Fallback to avoid empty documents
+        bodyData = rawResponse;
     }
     
     [self sendLog:[NSString stringWithFormat:@"Parsed HTTP Status: %ld", (long)statusCode]];
-    [self sendLog:[NSString stringWithFormat:@"Extracted Body: %lu bytes", (unsigned long)[bodyData length]]];
     
-    // REDIRECT INTERACTION PIPELINE
     if (statusCode >= 300 && statusCode < 400) {
         NSString *location = [headerDict objectForKey:@"Location"] ?: [headerDict objectForKey:@"location"];
         if (location) {
-            [self sendLog:[NSString stringWithFormat:@"Handling tracking redirect -> %@", location]];
             NSURL *redirectURL = [NSURL URLWithString:location relativeToURL:url];
             NSMutableURLRequest *redirectRequest = [NSMutableURLRequest requestWithURL:redirectURL];
             
             dispatch_async(dispatch_get_main_queue(), ^{
-                [self.client URLProtocol:self wasRedirectedToRequest:redirectRequest redirectResponse:[[NSHTTPURLResponse alloc] initWithURL:url statusCode:statusCode HTTPVersion:@"HTTP/1.1" headerFields:headerDict]];
+                [self.client URLProtocol:self wasRedirectedToRequest:redirectRequest redirectResponse:[[[NSHTTPURLResponse alloc] initWithURL:url statusCode:statusCode HTTPVersion:@"HTTP/1.1" headerFields:headerDict] autorelease]];
             });
             return;
         }
