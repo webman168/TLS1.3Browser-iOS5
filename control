@@ -1,9 +1,9 @@
-Package: com.yourname.tls13browser
-Name: TLS13Browser
+Package: com.webman168.tls13browser
+Name: TLS1.3Browser
 Depends: firmware (>= 5.0)
 Version: 1.0
 Architecture: iphoneos-arm
 Description: Custom 32-bit browser supporting TLS 1.3 natively via mbedTLS.
-Maintainer: YourName
-Author: YourName
+Maintainer: webman168
+Author: webman168
 Section: Applications
