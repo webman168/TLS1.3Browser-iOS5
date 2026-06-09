@@ -19,12 +19,16 @@ for pem_path in pem_files:
     with open(pem_path, "r") as f:
         lines = f.readlines()
     
-    header_content += "    \""
+    header_content += "    "
     for line in lines:
-        # Strip trailing newlines and escape quotes/newlines for a clean C-string literal
+        # Strip trailing carriage returns/newlines from the file line
         clean_line = line.replace("\r", "").replace("\n", "").replace('"', '\\"')
-        header_content += clean_line + "\\n"
-    header_content += "\",\n"
+        if clean_line:
+            # Wrap every single line in native C-string quotes with a trailing newline token
+            header_content += f'"{clean_line}\\n"\n    '
+    
+    header_content = header_content.rstrip() # Clean up trailing whitespace
+    header_content += ",\n"
 
 # Add the final null terminator array element
 header_content += """    0 // Null terminator

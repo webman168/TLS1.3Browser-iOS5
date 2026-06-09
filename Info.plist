@@ -7,7 +7,7 @@
     <key>CFBundleExecutable</key>
     <string>TLS1.3Browser</string>
     <key>CFBundleIdentifier</key>
-    <string>com.yourname.tls13browser</string>
+    <string>com.webman168.tls13browser</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
@@ -22,6 +22,21 @@
     <string>1.0</string>
     <key>LSRequiresIPhoneOS</key>
     <true/>
+    
+    <key>CFBundleIcons</key>
+    <dict>
+        <key>CFBundlePrimaryIcon</key>
+        <dict>
+            <key>CFBundleIconFiles</key>
+            <array>
+                <string>appicon-57.png</string>
+                <string>appicon-114.png</string>
+            </array>
+            <key>UIPrerenderedIcon</key>
+            <false/>
+        </dict>
+    </dict>
+
     <key>UIRequiredDeviceCapabilities</key>
     <array>
         <string>armv7</string>

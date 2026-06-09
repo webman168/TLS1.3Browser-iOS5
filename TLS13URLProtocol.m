@@ -10,6 +10,16 @@
 // Include the dynamic bundle built by the Makefile/Python generation script
 #include "certs_bundle.h"
 
+// --- Verification Callback for Deep Diagnostic Logs ---
+static int my_verify_callback(void *data, mbedtls_x509_crt *crt, int depth, uint32_t *flags) {
+    if (*flags != 0) {
+        char vrfy_buf[512];
+        mbedtls_x509_crt_verify_info(vrfy_buf, sizeof(vrfy_buf), "  ! ", *flags);
+        NSLog(@"[TLS13 Callback] Cert verification flags at depth %d:\n%s", depth, vrfy_buf);
+    }
+    return 0; // Let the engine natively handle error outcomes downstream
+}
+
 @implementation TLS13URLProtocol
 
 + (BOOL)canInitWithRequest:(NSURLRequest *)request {
@@ -77,7 +87,7 @@
             certCount++;
         }
     }
-    [self sendLog:[NSString stringWithFormat:@"Loaded %d CA anchors.", certCount]];
+    [self sendLog:[NSString stringWithFormat:@"Loaded %d cert assets into internal bank.", certCount]];
     
     mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, NULL, 0);
     
@@ -90,6 +100,7 @@
         return;
     }
     
+    // 1. Establish Default Client State Configurations
     mbedtls_ssl_config_defaults(&conf, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT);
     mbedtls_ssl_conf_min_version(&conf, MBEDTLS_SSL_MAJOR_VERSION_3, MBEDTLS_SSL_MINOR_VERSION_4);
     mbedtls_ssl_conf_max_version(&conf, MBEDTLS_SSL_MAJOR_VERSION_3, MBEDTLS_SSL_MINOR_VERSION_4);
@@ -98,10 +109,17 @@
     const char *alpn_protocols[] = { "http/1.1", NULL };
     mbedtls_ssl_conf_alpn_protocols(&conf, alpn_protocols);
     
-    mbedtls_ssl_conf_authmode(&conf, MBEDTLS_SSL_VERIFY_NONE); 
+    // 2. Strict Authentication Settings
+    mbedtls_ssl_conf_authmode(&conf, MBEDTLS_SSL_VERIFY_REQUIRED); 
+    mbedtls_ssl_conf_verify(&conf, my_verify_callback, NULL);
+    
+    // Pass parsed context collection into ca_chain. NULL used for the CRL third parameter.
     mbedtls_ssl_conf_ca_chain(&conf, &cacert, NULL);
     
+    // 3. Setup Context Engine Bindings
     mbedtls_ssl_setup(&ssl, &conf);
+    
+    // 4. Force SNI and Host Identity Registration Post-Setup Sequence
     mbedtls_ssl_set_hostname(&ssl, [host UTF8String]);
     mbedtls_ssl_set_bio(&ssl, &server_fd, mbedtls_net_send, mbedtls_net_recv, NULL);
     
@@ -109,6 +127,14 @@
     while ((ret = mbedtls_ssl_handshake(&ssl)) != 0) {
         if (ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE) {
             [self sendLog:[NSString stringWithFormat:@"Fatal Handshake Error: %d", ret]];
+            
+            uint32_t flags = mbedtls_ssl_get_verify_result(&ssl);
+            if (flags != 0) {
+                char vrfy_buf[512];
+                mbedtls_x509_crt_verify_info(vrfy_buf, sizeof(vrfy_buf), "  ! ", flags);
+                [self sendLog:[NSString stringWithFormat:@"Handshake Verification Fail Detail:\n%s", vrfy_buf]];
+            }
+
             mbedtls_net_free(&server_fd);
             mbedtls_x509_crt_free(&cacert);
             NSError *err = [NSError errorWithDomain:@"TLS13_Handshake" code:ret userInfo:nil];
@@ -117,9 +143,21 @@
             return;
         }
     }
+    
+    uint32_t flags = mbedtls_ssl_get_verify_result(&ssl);
+    if (flags != 0) {
+        [self sendLog:@"Fatal: Secondary safety check failed validation post-handshake loop."];
+        mbedtls_net_free(&server_fd);
+        mbedtls_x509_crt_free(&cacert);
+        NSError *err = [NSError errorWithDomain:@"TLS13_CertVerification" code:flags userInfo:nil];
+        [self.client URLProtocol:self didFailWithError:err];
+        [self.client URLProtocolDidFinishLoading:self];
+        return;
+    }
+
     [self sendLog:@"TLS 1.3 Handshake SUCCESSFUL!"];
     
-    // Modernized minimal HTTP/1.1 payload string targeting standard endpoints
+    // Minimal HTTP/1.1 payload target
     NSString *getPayload = [NSString stringWithFormat:
         @"GET %@ HTTP/1.1\r\n"
         "Host: %@\r\n"
@@ -173,28 +211,20 @@
     NSMutableDictionary *headerDict = [[NSMutableDictionary alloc] init];
     NSData *bodyData = nil;
     
-    // Convert response to string up to header boundary safely to parse lines
     NSString *responseString = [[NSString alloc] initWithData:rawResponse encoding:NSUTF8StringEncoding];
-    
     if (!responseString) {
-        // Fallback if binary mapping issues occur
         responseString = [[NSString alloc] initWithData:rawResponse encoding:NSASCIIStringEncoding];
     }
     
     if (responseString.length > 0) {
-        // Uniform parsing across both \r\n and \n boundaries
         NSArray *lines = [responseString componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
-        NSInteger bodyLineIndex = 0;
         BOOL parsingHeaders = YES;
         
         for (NSInteger i = 0; i < lines.count; i++) {
             NSString *line = [lines objectAtIndex:i];
-            
-            // Clean out potential tracking whitespace issues
             line = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
             
             if (i == 0) {
-                // Parse HTTP Status Line (e.g., HTTP/1.1 302 Found)
                 NSArray *statusParts = [line componentsSeparatedByString:@" "];
                 if (statusParts.count > 1) {
                     statusCode = [[statusParts objectAtIndex:1] integerValue];
@@ -204,9 +234,7 @@
             
             if (parsingHeaders) {
                 if (line.length == 0) {
-                    // Empty line signifies the header boundary end
                     parsingHeaders = NO;
-                    bodyLineIndex = i + 1;
                     continue;
                 }
                 
@@ -219,12 +247,10 @@
                     }
                 }
             } else {
-                // Break early once body segment boundary hits to handle raw data array mapping safely
                 break;
             }
         }
         
-        // Re-locate body offset cleanly via binary markers instead of relying on string indices
         NSData *headerSeparator = [@"\r\n\r\n" dataUsingEncoding:NSUTF8StringEncoding];
         NSRange sepRange = [rawResponse rangeOfData:headerSeparator options:0 range:NSMakeRange(0, [rawResponse length])];
         if (sepRange.location == NSNotFound) {
@@ -239,7 +265,7 @@
     }
     
     if (!bodyData) {
-        bodyData = rawResponse; // Fallback to avoid empty documents
+        bodyData = rawResponse;
     }
     
     [self sendLog:[NSString stringWithFormat:@"Parsed HTTP Status: %ld", (long)statusCode]];
