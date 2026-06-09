@@ -5,13 +5,13 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>English</string>
     <key>CFBundleExecutable</key>
-    <string>TLS13Browser</string>
+    <string>TLS1.3Browser</string>
     <key>CFBundleIdentifier</key>
     <string>com.yourname.tls13browser</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>TLS13Browser</string>
+    <string>TLS1.3Browser</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

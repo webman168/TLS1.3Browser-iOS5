@@ -4,13 +4,13 @@ SYSROOT = $(HOME)/theos/sdks/iPhoneOS5.1.sdk
 
 include $(THEOS)/makefiles/common.mk
 
-APPLICATION_NAME = TLS13Browser
-TLS13Browser_FILES = main.m TLS13AppDelegate.m TLS13URLProtocol.m
-TLS13Browser_FRAMEWORKS = UIKit CoreGraphics
-TLS13Browser_RESOURCE_FILES = Info.plist
+APPLICATION_NAME = TLS1.3Browser
+TLS1.3Browser_FILES = main.m TLS13AppDelegate.m TLS13URLProtocol.m
+TLS1.3Browser_FRAMEWORKS = UIKit CoreGraphics
+TLS1.3Browser_RESOURCE_FILES = Info.plist
 
-TLS13Browser_CFLAGS = -I./libs/include -I$(SYSROOT)/usr/include -I.
-TLS13Browser_LDFLAGS = -L./libs -lmbedtls -lmbedcrypto -lmbedx509
+TLS1.3Browser_CFLAGS = -I./libs/include -I$(SYSROOT)/usr/include -I.
+TLS1.3Browser_LDFLAGS = -L./libs -lmbedtls -lmbedcrypto -lmbedx509
 
 # DYNAMIC STEP: Call our robust helper script to generate the cert header safely
 before-all::
